@@ -76,6 +76,33 @@ defmodule FormTest do
     end
   end
 
+  defp to_basic_types({:type, anno, type_name, fields}, types) when is_list(fields) and type_name in [:map, :tuple] do
+    fields = Enum.map(fields, fn field -> to_basic_types(field, types) end)
+    {:type, anno, type_name, fields}
+  end
+
+  defp to_basic_types({:type, anno, :map_field_exact, [key_type, value_type]}, types) do
+    {:type, anno, :map_field_exact, [key_type, to_basic_types(value_type, types)]}
+  end
+
+  defp to_basic_types({:user_type, _anno, user_type_name, _args}, types) do
+    types
+    |> Enum.find(types, fn {declaration, {type_name, _, _}} ->
+      declaration in [:type, :typep] && type_name == user_type_name
+    end)
+    |> then(fn {_, {_, type, _}} -> type end)
+  end
+
+  defp to_basic_types({:ann_type, anno, [var, type]}, types) do
+    {:ann_type, anno, [var, to_basic_types(type, types)]}
+  end
+
+  defp to_basic_types({name, type, args}, types) when is_atom(name) do
+    {name, to_basic_types(type, types), args}
+  end
+
+  defp to_basic_types(type, _types), do: type
+
   defmacrop assert_type({module_name, type_name}, expected_type_definition) do
     quote do
       {:ok, types} = Code.Typespec.fetch_types(unquote(module_name))
@@ -90,7 +117,10 @@ defmodule FormTest do
 
       {:type, type} = type
 
-      {:"::", _, [_, type_definition]} = Code.Typespec.type_to_quoted(type)
+      {:"::", _, [_, type_definition]} =
+        type
+        |> to_basic_types(types)
+        |> Code.Typespec.type_to_quoted()
 
       actual_type_definition = Macro.to_string(type_definition)
 
